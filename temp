@@ -1,0 +1,139 @@
+// #[embassy_executor::task]
+// async fn stick_task(
+//     gpio0: GPIO0<'static>,
+//     gpio1: GPIO1<'static>,
+//     gpio8: GPIO8<'static>,
+//     // sw: esp_hal::gpio::Input<'d>,
+// ) {
+//     let input_cfg = InputConfig::default().with_pull(esp_hal::gpio::Pull::Up);
+    
+//     let clk = esp_hal::gpio::Input::new(gpio0, input_cfg);
+//     let dt  = esp_hal::gpio::Input::new(gpio1, input_cfg);
+//     let sw: esp_hal::gpio::Input<'_>  = esp_hal::gpio::Input::new(gpio8, input_cfg);
+//     let mut prev_clk = clk.is_high();
+//     let mut prev_sw = sw.is_high();
+//     loop {
+//         let clk_now = clk.is_high();
+
+//         if prev_clk && !clk_now {
+//             if dt.is_high() {
+//                 let _ =ROTARY_CH.try_send(true);
+//                 INMENU.lock(|i_m|{
+//                     if let Some(in_m)=*i_m.borrow(){
+//                         match in_m {
+//                             INMENU::BRIGHTNESS=>{
+//                                 BRIGHTNESS.lock(|b|{
+//                                     let mut b = b.borrow_mut();
+//                                     *b = b.saturating_add(1);
+//                                     let _ =RGB_CH.try_send(CHANGELED::BRIGHTNESS);
+                                    
+//                                 });
+//                             },
+//                             INMENU::COLOR=>{
+
+//                             }
+//                         }
+//                     }else{
+//                         let mut pos_t=0;
+//                         MENU.lock(|m| {
+//                             let mut mode = m.borrow_mut();
+//                             *mode = mode.next();
+//                             log::info!("MENU={:?}", mode);
+//                         });
+//                         POS.lock(|p| {
+//                             *p.borrow_mut() -= 1;
+//                             pos_t=*p.borrow();
+//                         });
+//                         // POS.fetch_add(1, Ordering::Relaxed);
+//                         log::info!("CCW pos={}", pos_t);
+//                     }
+//                 });
+                
+//             } else {
+//                 let _ =ROTARY_CH.try_send(true);
+//                 INMENU.lock(|i_m|{
+//                     if let Some(in_m)=*i_m.borrow(){
+//                         match in_m {
+//                             INMENU::BRIGHTNESS=>{
+//                                 BRIGHTNESS.lock(|b|{
+//                                     let mut b = b.borrow_mut();
+//                                     *b = b.saturating_sub(1);
+//                                     let _ =RGB_CH.try_send(CHANGELED::BRIGHTNESS);
+//                                 });
+//                             },
+//                             INMENU::COLOR=>{
+
+//                             }
+//                         }
+//                     }else{
+//                         let mut pos_t=0;
+//                         MENU.lock(|m| {
+//                             let mut mode = m.borrow_mut();
+//                             *mode = mode.prev();
+//                             // *m=*m..prev();
+//                             log::info!("MENU={:?}", mode);
+//                         });
+//                         POS.lock(|p| {
+//                             *p.borrow_mut() += 1;
+//                             pos_t=*p.borrow();
+//                             // *p += 1;
+//                             // pos_t=*p;
+//                         });
+//                         // pos += 1;
+//                         log::info!("CW pos={}", pos_t);
+//                     }
+//                 });
+                
+//             }
+//         }
+//         prev_clk = clk_now;
+
+//         let sw_now = sw.is_high();
+//         if prev_sw && !sw_now {
+//             MENU.lock(|m| {
+//                 let mut mode = m.borrow_mut();
+//                 match *mode {
+//                     APPMODE::BRIGHTNESS=>{
+//                         INMENU.lock(|i_m|{
+//                             let mut m = i_m.borrow_mut();
+//                             match *m {
+//                                 None=>{
+//                                     *m=Some(INMENU::BRIGHTNESS);
+//                                 },
+//                                 Some(_)=>{
+//                                     *m=None;
+//                                 }
+//                             }
+                            
+//                         });
+//                     },
+//                     APPMODE::COLOR=>{
+//                         INMENU.lock(|i_m|{
+//                             let mut m = i_m.borrow_mut();
+//                             match *m {
+//                                 None=>{
+//                                     *m=Some(INMENU::COLOR);
+//                                 },
+//                                 Some(_)=>{
+//                                     *m=None;
+//                                 }
+//                             }
+                            
+//                         });
+//                     },
+//                     _=>{
+//                         INMENU.lock(|i_m|{
+//                             let mut m = i_m.borrow_mut();
+//                             *m=None;
+//                         });
+//                     }
+//                 }
+//             });
+//             ROTARY_CH.try_send(true);
+
+//             log::info!("BUTTON");
+//         }
+//         prev_sw = sw_now;
+//         Timer::after(Duration::from_millis(1)).await;
+//     }
+// }
