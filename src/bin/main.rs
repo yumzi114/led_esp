@@ -6,8 +6,9 @@
     holding buffers for the duration of a data transfer."
 )]
 #![deny(clippy::large_stack_frames)]
+mod menu_display_fn;
 
-
+use menu_display_fn::*;
 use embassy_executor::Spawner;
 
 use embassy_sync::channel::Channel;
@@ -85,7 +86,8 @@ static RGB_CH: Channel<CriticalSectionRawMutex, CHANGELED, 8> = Channel::new();
 static BRIGHTNESS: Mutex<CriticalSectionRawMutex, RefCell<u8>> =
     Mutex::new(RefCell::new(0));
 
-
+static SHOW_LIGHT: Mutex<CriticalSectionRawMutex, RefCell<MODE>> =
+    Mutex::new(RefCell::new(MODE::NOMAR));
 
 #[derive(Clone, Copy,Debug,PartialEq)]
 enum INCOLOR {
@@ -97,11 +99,14 @@ enum INCOLOR {
 enum INMENU {
     BRIGHTNESS,
     COLOR,
+    MODE,
 }
 #[derive(Clone, Copy,Debug,PartialEq)]
 enum CHANGELED {
     BRIGHTNESS,
-    COLOR,
+    RED,
+    GREEN,
+    BLUE,
     MODE
 }
 #[derive(Clone, Copy,Debug,PartialEq)]
@@ -109,21 +114,48 @@ enum APPMODE {
     MAIN,
     BRIGHTNESS,
     COLOR,
+    MODE
+}
+
+#[derive(Clone, Copy,Debug,PartialEq)]
+enum MODE {
+    NOMAR,
+    DYNAMIC,
+    WAVE,
+}
+impl MODE {
+    fn next(&mut self) -> Self {
+        match self {
+            MODE::NOMAR=>MODE::DYNAMIC,
+            MODE::DYNAMIC=>MODE::WAVE,
+            MODE::WAVE=>MODE::NOMAR
+        }
+    }
+
+    fn prev(&mut self) -> Self {
+        match self {
+            MODE::NOMAR=>MODE::WAVE,
+            MODE::DYNAMIC=>MODE::NOMAR,
+            MODE::WAVE=>MODE::DYNAMIC
+        }
+    }
 }
 impl APPMODE {
     fn next(&mut self) -> Self {
         match self {
             APPMODE::MAIN => APPMODE::BRIGHTNESS,
             APPMODE::BRIGHTNESS => APPMODE::COLOR,
-            APPMODE::COLOR => APPMODE::MAIN,
+            APPMODE::COLOR => APPMODE::MODE,
+            APPMODE::MODE => APPMODE::MAIN,
         }
     }
 
     fn prev(&mut self) -> Self {
         match self {
-            APPMODE::MAIN => APPMODE::COLOR,
+            APPMODE::MAIN => APPMODE::MODE,
             APPMODE::BRIGHTNESS => APPMODE::MAIN,
             APPMODE::COLOR => APPMODE::BRIGHTNESS,
+            APPMODE::MODE => APPMODE::COLOR,
         }
     }
 }
@@ -139,9 +171,6 @@ async fn led_task(
     let channel = rmt.channel0;
     
     let mut led= esp_hal_smartled::SmartLedsAdapter::new(channel, gpio5, &mut buffer);
-    let mut r = 0_u8;
-    let mut g = 0_u8;
-    let mut b = 0_u8;
     let mut flag_bri = BRIGHTNESS.lock(|d| *d.borrow());
     // let mut rgb_co = [RGB8::new(255, 255, 255); 17];
     loop{
@@ -149,33 +178,54 @@ async fn led_task(
         let sig = RGB_CH.receive().await;
         match sig {
             CHANGELED::BRIGHTNESS=>{
-                let curr = BRIGHTNESS.lock(|d| *d.borrow());
+                let target = BRIGHTNESS.lock(|d| *d.borrow());
 
-                if curr > flag_bri {
-                    let diff = curr - flag_bri;
-                    r = r.saturating_add(diff);
-                    g = g.saturating_add(diff);
-                    b = b.saturating_add(diff);
-                } else if curr < flag_bri {
-                    let diff = flag_bri - curr;
-                    r = r.saturating_sub(diff);
-                    g = g.saturating_sub(diff);
-                    b = b.saturating_sub(diff);
-                }
-                log::info!(
-                    "prev={}, curr={}, rgb=({}, {}, {})",
-                    flag_bri,
-                    curr,
-                    r,
-                    g,
-                    b
-                );
-                flag_bri = curr;
-                let rgb_co = [RGB8::new(r, g, b); 17];
+                RGB_DATA.lock(|data| {
+                let mut data = data.borrow_mut();
+                let now_bri = data.0.max(data.1).max(data.2);
+
+                    if target > now_bri {
+                        data.0 = data.0.saturating_add(1);
+                        data.1 = data.1.saturating_add(1);
+                        data.2 = data.2.saturating_add(1);
+                    } else if target < now_bri {
+                        data.0 = data.0.saturating_sub(1);
+                        data.1 = data.1.saturating_sub(1);
+                        data.2 = data.2.saturating_sub(1);
+                    }
+                });
+
+                let rgb = RGB_DATA.lock(|d| *d.borrow());
+                let rgb_co = [RGB8::new(rgb.0, rgb.1, rgb.2); 17];
                 led.write(rgb_co.into_iter()).unwrap();
             },
-            CHANGELED::COLOR=>{
-
+            CHANGELED::RED=>{
+                let cor=RGB_DATA.lock(|c|*c.borrow());
+                let max_bri = cor.0.max(cor.1).max(cor.2);
+                BRIGHTNESS.lock(|b| {
+                    *b.borrow_mut() = max_bri;
+                });
+                let rgb_co = [RGB8::new(cor.0,cor.1,cor.2); 17];
+                led.write(rgb_co.into_iter()).unwrap();
+            },
+            CHANGELED::GREEN=>{
+                let cor=RGB_DATA.lock(|c|*c.borrow());
+                let max_bri = cor.0.max(cor.1).max(cor.2);
+                BRIGHTNESS.lock(|b| {
+                    *b.borrow_mut() = max_bri;
+                });
+                
+                let rgb_co = [RGB8::new(cor.0,cor.1,cor.2); 17];
+                led.write(rgb_co.into_iter()).unwrap();
+            },
+            CHANGELED::BLUE=>{
+                let cor=RGB_DATA.lock(|c|*c.borrow());
+                let max_bri = cor.0.max(cor.1).max(cor.2);
+                BRIGHTNESS.lock(|b| {
+                    *b.borrow_mut() = max_bri;
+                });
+                let rgb_co = [RGB8::new(cor.0,cor.1,cor.2); 17];
+                led.write(rgb_co.into_iter()).unwrap();
             },
             CHANGELED::MODE=>{
 
@@ -243,7 +293,9 @@ async fn stick_task(
                 INMENU.lock(|i_m|{
                     if let Some(in_m)=*i_m.borrow(){
                         match in_m {
+                            
                             INMENU::BRIGHTNESS=>{
+                                
                                 BRIGHTNESS.lock(|b|{
                                     let mut b = b.borrow_mut();
                                     *b = b.saturating_add(1);
@@ -252,8 +304,44 @@ async fn stick_task(
                                 });
                             },
                             INMENU::COLOR=>{
-
+                                let in_c =INCOLOR.lock(|c|*c.borrow());
+                                if let Some(inc)=in_c{
+                                    match inc {
+                                        INCOLOR::RED=>{
+                                            RGB_DATA.lock(|c|{
+                                                let mut c = c.borrow_mut();
+                                                c.0 =c.0.saturating_add(1); 
+                                            });
+                                            let _ =RGB_CH.try_send(CHANGELED::RED);
+                                            log::info!("REC CAL");
+                                        },
+                                        INCOLOR::GREEN=>{
+                                            RGB_DATA.lock(|c|{
+                                                let mut c = c.borrow_mut();
+                                                c.1 =c.1.saturating_add(1); 
+                                            });
+                                            let _ =RGB_CH.try_send(CHANGELED::GREEN);
+                                            log::info!("GREEN CAL");
+                                        },
+                                        INCOLOR::BLUE=>{
+                                            RGB_DATA.lock(|c|{
+                                                let mut c = c.borrow_mut();
+                                                c.2 =c.2.saturating_add(1); 
+                                            });
+                                            let _ =RGB_CH.try_send(CHANGELED::BLUE);
+                                            log::info!("BLUE CAL");
+                                        },
+                                    }
+                                }
                             }
+                            INMENU::MODE=>{
+                                SHOW_LIGHT.lock(|b|{
+                                    let mut b = b.borrow_mut();
+                                    *b=b.next();
+                                    let _ =RGB_CH.try_send(CHANGELED::MODE);
+                                });
+                            },
+                            
                         }
                     }else{
                         let mut pos_t=0;
@@ -290,17 +378,39 @@ async fn stick_task(
                                 if let Some(inc)=in_c{
                                     match inc {
                                         INCOLOR::RED=>{
+                                            RGB_DATA.lock(|c|{
+                                                let mut c = c.borrow_mut();
+                                                c.0 =c.0.saturating_sub(1); 
+                                                let _ =RGB_CH.try_send(CHANGELED::RED);
+                                            });
                                             log::info!("REC CAL");
                                         },
                                         INCOLOR::GREEN=>{
+                                            RGB_DATA.lock(|c|{
+                                                let mut c = c.borrow_mut();
+                                                c.1 =c.1.saturating_sub(1); 
+                                                let _ =RGB_CH.try_send(CHANGELED::GREEN);
+                                            });
                                             log::info!("GREEN CAL");
                                         },
                                         INCOLOR::BLUE=>{
+                                            RGB_DATA.lock(|c|{
+                                                let mut c = c.borrow_mut();
+                                                c.2 =c.2.saturating_sub(1); 
+                                                let _ =RGB_CH.try_send(CHANGELED::BLUE);
+                                            });
                                             log::info!("BLUE CAL");
                                         },
                                     }
                                 }
                             }
+                            INMENU::MODE=>{
+                                SHOW_LIGHT.lock(|b|{
+                                    let mut b = b.borrow_mut();
+                                    *b=b.prev();
+                                    let _ =RGB_CH.try_send(CHANGELED::MODE);
+                                });
+                            },
                         }
                     }else{
                         let mut pos_t=0;
@@ -435,7 +545,7 @@ async fn pause_task() {
         }
 
         if let Some(s) = start {
-            if s.elapsed() >= Duration::from_secs(5) {
+            if s.elapsed() >= Duration::from_secs(30) {
                 PAUSE.lock(|p| {
                     *p.borrow_mut() = false;
                 });
@@ -514,6 +624,7 @@ async fn main(spawner: Spawner) -> ! {
 
     
     let mut flag_bri = 255_u8;
+    let mut flag_rgb_data = (255_u8,255_u8,255_u8);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     // let data = [RGB8::new(8, 0, 0); 17];
     let sw_interrupt =
@@ -569,6 +680,9 @@ async fn main(spawner: Spawner) -> ! {
                     },
                     APPMODE::COLOR=>{
                         "COLOR"
+                    },
+                    APPMODE::MODE=>{
+                        "MODE"
                     }
                 };
 
@@ -615,7 +729,10 @@ async fn main(spawner: Spawner) -> ! {
                             bri_body(&mut display,&mut in_menu_t, &mut flag_bri);
                         },
                         APPMODE::COLOR=>{
-                            color_body(&mut display,&mut in_menu_t, &mut in_color_t);
+                            color_body(&mut display,&mut in_menu_t, &mut in_color_t,&mut flag_rgb_data);
+                        },
+                        APPMODE::MODE=>{
+                            mode_body(&mut display,&mut in_menu_t);
                         }
                     }
                     
@@ -665,217 +782,4 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples
-}
-
-
-fn main_body (
-    display: &mut mipidsi::Display<mipidsi::interface::SpiInterface<'_, ExclusiveDevice<Spi<'_, esp_hal::Blocking>, Output<'_>, embedded_hal_bus::spi::NoDelay>, Output<'_>>, mipidsi::models::ST7796, Output<'_>>
-){
-    let style = U8g2TextStyle::new(
-        u8g2_fonts::fonts::u8g2_font_helvB18_tr,
-        Rgb565::WHITE,
-    );
-    Text::new("BRIGHTNESS : ", Point::new(50, 180), &style)
-        .draw(display)
-        .unwrap();
-    BRIGHTNESS.lock(|b|{
-        let mut buf = heapless::String::<8>::new();
-        let text = *b.borrow();
-        write!(buf, "{}", text).unwrap();
-        // write!(buf, "{}", val).unwrap();
-        Text::new(&buf, Point::new(250, 180), &style)
-            .draw(display)
-            .unwrap();
-    });
-    Text::new("COLOR : ", Point::new(50, 230), &style)
-        .draw(display)
-        .unwrap();
-    Text::new("MODE : ", Point::new(50, 280), &style)
-        .draw(display)
-        .unwrap();
-    
-}
-
-fn bri_body (
-    display: &mut mipidsi::Display<mipidsi::interface::SpiInterface<'_, ExclusiveDevice<Spi<'_, esp_hal::Blocking>, Output<'_>, embedded_hal_bus::spi::NoDelay>, Output<'_>>, mipidsi::models::ST7796, Output<'_>>,
-    in_menu_t:&mut Option<INMENU>,
-    flag_bri:&mut u8,
-){
-    let style = U8g2TextStyle::new(
-        u8g2_fonts::fonts::u8g2_font_helvB18_tr,
-        Rgb565::WHITE,
-    );
-    INMENU.lock(|i_m|{
-        let mut m = i_m.borrow_mut();
-        if let Some(in_m)=*m{
-            if in_m==INMENU::BRIGHTNESS{
-                if let None=in_menu_t.as_ref(){
-                    embedded_graphics::primitives::Rectangle::new(Point::new(0, 140), Size::new(500, 180))
-                    .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
-                    .draw(display)
-                    .unwrap();
-                    Text::new("VALUE : ", Point::new(50, 180), &style)
-                        .draw(display)
-                        .unwrap();
-                    let br_value = BRIGHTNESS.lock(|valuse|*valuse.borrow());
-
-                    // let text = *value.borrow();
-                    embedded_graphics::primitives::Rectangle::new(Point::new(200, 150), Size::new(100, 40))
-                    .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
-                    .draw(display)
-                    .unwrap();
-                    let mut buf = heapless::String::<8>::new();
-                    // let text = *value.borrow();
-                    write!(buf, "{}", br_value).unwrap();
-                    // write!(buf, "{}", val).unwrap();
-                    Text::new(&buf, Point::new(250, 180), &style)
-                        .draw(display)
-                        .unwrap();
-                    *in_menu_t=Some(INMENU::BRIGHTNESS);
-                }
-                
-            }
-            let br_value = BRIGHTNESS.lock(|valuse|*valuse.borrow());
-            if *flag_bri != br_value{
-                embedded_graphics::primitives::Rectangle::new(Point::new(200, 150), Size::new(100, 40))
-                .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
-                .draw(display)
-                .unwrap();
-                let mut buf = heapless::String::<8>::new();
-                write!(buf, "{}", br_value).unwrap();
-                // write!(buf, "{}", val).unwrap();
-                Text::new(&buf, Point::new(250, 180), &style)
-                    .draw(display)
-                    .unwrap();
-                *flag_bri = br_value;
-            }
-            
-            
-        }else{
-            Text::new("Click to adjust the brightness", Point::new(50, 180), &style)
-                .draw(display)
-                .unwrap();
-            *in_menu_t=*m;
-        }
-        // *m=None;
-    });
-}
-
-fn color_body (
-    display: &mut mipidsi::Display<mipidsi::interface::SpiInterface<'_, ExclusiveDevice<Spi<'_, esp_hal::Blocking>, Output<'_>, embedded_hal_bus::spi::NoDelay>, Output<'_>>, mipidsi::models::ST7796, Output<'_>>,
-    in_menu_t:&mut Option<INMENU>,
-    in_col_t:&mut Option<INCOLOR>
-){
-    let style = U8g2TextStyle::new(
-        u8g2_fonts::fonts::u8g2_font_helvB18_tr,
-        Rgb565::WHITE,
-    );
-    let in_m = INMENU.lock(|in_m|*in_m.borrow());
-    if let Some(in_m)=in_m{
-            if in_m==INMENU::COLOR{
-                if let None=in_menu_t.as_ref(){
-                    embedded_graphics::primitives::Rectangle::new(Point::new(0, 140), Size::new(500, 180))
-                    .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
-                    .draw(display)
-                    .unwrap();
-                    Text::new("RED        : ", Point::new(50, 180), &style)
-                        .draw(display)
-                        .unwrap();
-                    Text::new("GREEN  : ", Point::new(50, 230), &style)
-                        .draw(display)
-                        .unwrap();
-                    Text::new("BLUE     : ", Point::new(50, 280), &style)
-                        .draw(display)
-                        .unwrap();
-                    *in_menu_t=Some(INMENU::COLOR);
-                }else{
-                    
-                    //IN COLOR MENU DISPLAY
-                    let inc = INCOLOR.lock(|inco|*inco.borrow());
-                    if *in_col_t != inc{
-                        embedded_graphics::primitives::Rectangle::new(Point::new(30, 185), Size::new(150, 20))
-                        .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
-                        .draw(display)
-                        .unwrap();
-                        embedded_graphics::primitives::Rectangle::new(Point::new(30, 235), Size::new(150, 20))
-                                .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
-                                .draw(display)
-                                .unwrap();
-                        embedded_graphics::primitives::Rectangle::new(Point::new(30, 285), Size::new(150, 20))
-                            .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
-                            .draw(display)
-                            .unwrap();
-                            // Text::new("RED        : ", Point::new(50, 180), &style)
-                            //     .draw(display)
-                            //     .unwrap();
-                            // Text::new("GREEN  : ", Point::new(50, 230), &style)
-                            //     .draw(display)
-                            //     .unwrap();
-                            // Text::new("BLUE     : ", Point::new(50, 280), &style)
-                            //     .draw(display)
-                            //     .unwrap();
-                        if let Some(in_c)=inc{
-                            match in_c {
-                                INCOLOR::RED=>{
-                                    // embedded_graphics::primitives::Rectangle::new(Point::new(30, 150), Size::new(150, 50))
-                                    //     .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
-                                    //     .draw(display)
-                                    //     .unwrap();
-                                    // Text::new("RED        : ", Point::new(50, 180), &style)
-                                    //     .draw(display)
-                                    //     .unwrap();
-                                    Text::new("______", Point::new(50, 185), &style)
-                                        .draw(display)
-                                        .unwrap();
-                                    // Text::new("RED", Point::new(50, 180), &style)
-                                    //     .draw(display)
-                                    //     .unwrap();
-                                    },  
-                                INCOLOR::GREEN=>{
-                                    // embedded_graphics::primitives::Rectangle::new(Point::new(30, 200), Size::new(150, 50))
-                                    //     .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
-                                    //     .draw(display)
-                                    //     .unwrap();
-                                    // Text::new("GREEN  : ", Point::new(50, 230), &style)
-                                    //     .draw(display)
-                                    //     .unwrap();
-                                    Text::new("______", Point::new(50, 235), &style)
-                                        .draw(display)
-                                        .unwrap();
-
-                                },
-                                INCOLOR::BLUE=>{
-                                    // embedded_graphics::primitives::Rectangle::new(Point::new(30, 250), Size::new(150, 50))
-                                    //     .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
-                                    //     .draw(display)
-                                    //     .unwrap();
-                                    // Text::new("BLUE     : ", Point::new(50, 280), &style)
-                                    //     .draw(display)
-                                    //     .unwrap();
-                                    Text::new("______", Point::new(50, 285), &style)
-                                        .draw(display)
-                                        .unwrap();
-
-                                }
-
-                            }
-                        }
-                        *in_col_t=inc;
-                    }
-                    
-                    
-                }
-            }
-        }else{
-            Text::new("Click to adjust the color", Point::new(50, 180), &style)
-                .draw(display)
-                .unwrap();
-            *in_menu_t=in_m;
-        }
-    // INMENU.lock(|i_m|{
-    //     let mut m: core::cell::RefMut<'_, Option<INMENU>> = i_m.borrow_mut();
-        
-    //     // *m=None;
-    // });
-    
 }
