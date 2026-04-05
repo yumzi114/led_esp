@@ -3,7 +3,7 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::{gpio::Output, spi::master::Spi};
 use u8g2_fonts::U8g2TextStyle;
 use core::fmt::Write;
-use crate::{BRIGHTNESS, INCOLOR, INMENU, RGB_DATA};
+use crate::{BRIGHTNESS, INCOLOR, INMENU, MODE, RGB_DATA, SHOW_LIGHT};
 use embedded_graphics::Drawable;
 
 
@@ -24,8 +24,16 @@ pub fn main_body (
     // let text = *b.borrow();
     write!(buf, "{}", text).unwrap();
     // write!(buf, "{}", val).unwrap();
-    
+    let mode = SHOW_LIGHT.lock(|f|*f.borrow());
+    let mode_t = match mode {
+        MODE::NOMAR=>"NOMAR",
+        MODE::DYNAMIC=>"DYNAMIC",
+        MODE::WAVE=>"WAVE"
+    };
     Text::new(&buf, Point::new(250, 180), &style)
+        .draw(display)
+        .unwrap();
+    Text::new(mode_t, Point::new(200, 280), &style)
         .draw(display)
         .unwrap();
     let mut buf = heapless::String::<18>::new();
@@ -307,6 +315,7 @@ pub fn color_body (
 pub fn mode_body (
     display: &mut mipidsi::Display<mipidsi::interface::SpiInterface<'_, ExclusiveDevice<Spi<'_, esp_hal::Blocking>, Output<'_>, embedded_hal_bus::spi::NoDelay>, Output<'_>>, mipidsi::models::ST7796, Output<'_>>,
     in_menu_t:&mut Option<INMENU>,
+    flag_mode:&mut MODE
 ){
     let style = U8g2TextStyle::new(
         u8g2_fonts::fonts::u8g2_font_helvB18_tr,
@@ -317,15 +326,59 @@ pub fn mode_body (
         if let Some(in_m)=*m{
             if in_m==INMENU::MODE{
                 if let None=in_menu_t.as_ref(){
+                    let text = match *flag_mode {
+                        MODE::NOMAR=>{
+                            "NOMAR"
+                        }
+                        MODE::DYNAMIC=>{
+                            "DYNAMIC"
+                        },
+                        MODE::WAVE=>{
+                            "WAVE"
+                        }
+                    };
                     embedded_graphics::primitives::Rectangle::new(Point::new(0, 140), Size::new(500, 180))
+                    .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
+                    .draw(display)
+                    .unwrap();
+                    embedded_graphics::primitives::Rectangle::new(Point::new(200, 150), Size::new(190, 40))
                     .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
                     .draw(display)
                     .unwrap();
                     Text::new("MODE : ", Point::new(50, 180), &style)
                         .draw(display)
                         .unwrap();
+                    Text::new(text, Point::new(250, 180), &style)
+                        .draw(display)
+                        .unwrap();
                     *in_menu_t=Some(INMENU::MODE);
                 }
+                let mode = SHOW_LIGHT.lock(|d|*d.borrow());
+                if *flag_mode != mode{
+                    let text = match mode {
+                        MODE::NOMAR=>{
+                            "NOMAR"
+                        }
+                        MODE::DYNAMIC=>{
+                            "DYNAMIC"
+                        },
+                        MODE::WAVE=>{
+                            "WAVE"
+                        }
+                    };
+                    embedded_graphics::primitives::Rectangle::new(Point::new(200, 150), Size::new(190, 40))
+                        .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(Rgb565::RED))
+                        .draw(display)
+                        .unwrap();
+                        let mut buf = heapless::String::<8>::new();
+                        // let text = *value.borrow();
+                        // write!(buf, "{}", br_value).unwrap();
+                        // write!(buf, "{}", val).unwrap();
+                        Text::new(text, Point::new(250, 180), &style)
+                            .draw(display)
+                            .unwrap();
+                    }
+                    *flag_mode=mode;
                 
             }
             

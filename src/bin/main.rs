@@ -7,7 +7,8 @@
 )]
 #![deny(clippy::large_stack_frames)]
 mod menu_display_fn;
-
+mod led_scal_fn;
+use led_scal_fn::*;
 use menu_display_fn::*;
 use embassy_executor::Spawner;
 
@@ -172,66 +173,123 @@ async fn led_task(
     
     let mut led= esp_hal_smartled::SmartLedsAdapter::new(channel, gpio5, &mut buffer);
     let mut flag_bri = BRIGHTNESS.lock(|d| *d.borrow());
+    let mut loop_flag= false;
+    let mut wave_tick: u8 = 0;
+    let mut frame = [RGB8::new(0, 0, 0); 17];
+    let mut dyn_level: u8 = 20;
+    let mut dyn_up = true;
+    let mut dyn_tick: u8 = 0;
+
     // let mut rgb_co = [RGB8::new(255, 255, 255); 17];
     loop{
-        log::info!("LED TASK");
-        let sig = RGB_CH.receive().await;
-        match sig {
-            CHANGELED::BRIGHTNESS=>{
-                let target = BRIGHTNESS.lock(|d| *d.borrow());
+        let mode =SHOW_LIGHT.lock(|f|*f.borrow());
+        if let Ok(sig)=RGB_CH.try_receive(){
+            match sig {
+                CHANGELED::BRIGHTNESS=>{
+                    let target = BRIGHTNESS.lock(|d| *d.borrow());
 
-                RGB_DATA.lock(|data| {
-                let mut data = data.borrow_mut();
-                let now_bri = data.0.max(data.1).max(data.2);
+                    RGB_DATA.lock(|data| {
+                    let mut data = data.borrow_mut();
+                    let now_bri = data.0.max(data.1).max(data.2);
 
-                    if target > now_bri {
-                        data.0 = data.0.saturating_add(1);
-                        data.1 = data.1.saturating_add(1);
-                        data.2 = data.2.saturating_add(1);
-                    } else if target < now_bri {
-                        data.0 = data.0.saturating_sub(1);
-                        data.1 = data.1.saturating_sub(1);
-                        data.2 = data.2.saturating_sub(1);
+                        if target > now_bri {
+                            data.0 = data.0.saturating_add(1);
+                            data.1 = data.1.saturating_add(1);
+                            data.2 = data.2.saturating_add(1);
+                        } else if target < now_bri {
+                            data.0 = data.0.saturating_sub(1);
+                            data.1 = data.1.saturating_sub(1);
+                            data.2 = data.2.saturating_sub(1);
+                        }
+                    });
+                    // loop_flag = false;
+                    let rgb = RGB_DATA.lock(|d| *d.borrow());
+                    let rgb_co = [RGB8::new(rgb.0, rgb.1, rgb.2); 17];
+                    
+                    led.write(rgb_co.into_iter()).unwrap();
+                },
+                CHANGELED::RED=>{
+                    let cor=RGB_DATA.lock(|c|*c.borrow());
+                    let max_bri = cor.0.max(cor.1).max(cor.2);
+                    BRIGHTNESS.lock(|b| {
+                        *b.borrow_mut() = max_bri;
+                    });
+                    // loop_flag = false;
+                    let rgb_co = [RGB8::new(cor.0,cor.1,cor.2); 17];
+                    led.write(rgb_co.into_iter()).unwrap();
+                },
+                CHANGELED::GREEN=>{
+                    let cor=RGB_DATA.lock(|c|*c.borrow());
+                    let max_bri = cor.0.max(cor.1).max(cor.2);
+                    
+                    BRIGHTNESS.lock(|b| {
+                        *b.borrow_mut() = max_bri;
+                    });
+                    // loop_flag = false;
+                    let rgb_co = [RGB8::new(cor.0,cor.1,cor.2); 17];
+                    led.write(rgb_co.into_iter()).unwrap();
+                },
+                CHANGELED::BLUE=>{
+                    let cor=RGB_DATA.lock(|c|*c.borrow());
+                    let max_bri = cor.0.max(cor.1).max(cor.2);
+                    BRIGHTNESS.lock(|b| {
+                        *b.borrow_mut() = max_bri;
+                    });
+                    // loop_flag = false;
+                    let rgb_co = [RGB8::new(cor.0,cor.1,cor.2); 17];
+                    led.write(rgb_co.into_iter()).unwrap();
+                },
+                CHANGELED::MODE=>{
+                    
+                    if mode!=MODE::NOMAR{
+                        loop_flag = true;
+                    }else{
+                        loop_flag = false;
                     }
-                });
-
-                let rgb = RGB_DATA.lock(|d| *d.borrow());
-                let rgb_co = [RGB8::new(rgb.0, rgb.1, rgb.2); 17];
-                led.write(rgb_co.into_iter()).unwrap();
-            },
-            CHANGELED::RED=>{
-                let cor=RGB_DATA.lock(|c|*c.borrow());
-                let max_bri = cor.0.max(cor.1).max(cor.2);
-                BRIGHTNESS.lock(|b| {
-                    *b.borrow_mut() = max_bri;
-                });
-                let rgb_co = [RGB8::new(cor.0,cor.1,cor.2); 17];
-                led.write(rgb_co.into_iter()).unwrap();
-            },
-            CHANGELED::GREEN=>{
-                let cor=RGB_DATA.lock(|c|*c.borrow());
-                let max_bri = cor.0.max(cor.1).max(cor.2);
-                BRIGHTNESS.lock(|b| {
-                    *b.borrow_mut() = max_bri;
-                });
-                
-                let rgb_co = [RGB8::new(cor.0,cor.1,cor.2); 17];
-                led.write(rgb_co.into_iter()).unwrap();
-            },
-            CHANGELED::BLUE=>{
-                let cor=RGB_DATA.lock(|c|*c.borrow());
-                let max_bri = cor.0.max(cor.1).max(cor.2);
-                BRIGHTNESS.lock(|b| {
-                    *b.borrow_mut() = max_bri;
-                });
-                let rgb_co = [RGB8::new(cor.0,cor.1,cor.2); 17];
-                led.write(rgb_co.into_iter()).unwrap();
-            },
-            CHANGELED::MODE=>{
-
+                    
+                }
             }
         }
         
+        if loop_flag{
+            // let cor=
+
+            log::info!("LOOP FLAG");
+            
+            let data = RGB_DATA.lock(|c|*c.borrow());
+            // let mut da = [RGB8::new(data.0, data.1, data.2); 17];
+            match mode {
+                MODE::WAVE=>{
+                    fill_wave(&mut frame,  wave_tick,data);
+                    led.write(frame.iter().copied()).unwrap();
+                    wave_tick = wave_tick.wrapping_add(3);
+                    Timer::after(Duration::from_millis(20)).await;
+                }
+                MODE::DYNAMIC=>{
+                    // fill_dynamic(&mut frame, dyn_level);
+                    // led.write(frame.iter().copied()).unwrap();
+
+                    // update_breath(&mut dyn_level, &mut dyn_up);
+                    // Timer::after(Duration::from_millis(20)).await;
+                    fill_dynamic_color(&mut frame, dyn_tick);
+                    led.write(frame.iter().copied()).unwrap();
+
+                    dyn_tick = dyn_tick.wrapping_add(2);
+                    Timer::after(Duration::from_millis(30)).await;
+                }
+                MODE::NOMAR=>{
+                    let rgb = RGB_DATA.lock(|d| *d.borrow());
+                    let rgb_co = [RGB8::new(rgb.0,rgb.1,rgb.2); 17];
+                    led.write(rgb_co.into_iter()).unwrap();
+                    loop_flag = false;
+                }
+                _=>{
+
+                }
+            }
+            
+
+        }
         Timer::after(Duration::from_millis(1)).await;
 
     }
@@ -497,6 +555,20 @@ async fn stick_task(
                             
                         });
                     },
+                    APPMODE::MODE=>{
+                        INMENU.lock(|i_m|{
+                            let mut m = i_m.borrow_mut();
+                            match *m {
+                                None=>{
+                                    *m=Some(INMENU::MODE);
+                                },
+                                Some(_)=>{
+                                    *m=None;
+                                }
+                            }
+                            
+                        });
+                    },
                     _=>{
                         INMENU.lock(|i_m|{
                             let mut m = i_m.borrow_mut();
@@ -606,12 +678,12 @@ async fn main(spawner: Spawner) -> ! {
         u8g2_fonts::fonts::u8g2_font_helvB18_tr,
         Rgb565::WHITE,
     );
-    let rec=Text::new("HIIIIIIIIIIIII ", Point::new(20, 40), &style)
+    let rec=Text::new("Congrats on your wedding! ", Point::new(20, 40), &style)
         .draw(&mut display)
         .unwrap();
-    let rec=Text::new("Yes ~~~~~~~~~~", rec, &style)
-        .draw(&mut display)
-        .unwrap();
+    // let rec=Text::new("Yes ~~~~~~~~~~", rec, &style)
+    //     .draw(&mut display)
+    //     .unwrap();
     let mut rec = Point::new(20, 80);
     for _ in 0..56{
         
@@ -626,6 +698,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut flag_bri = 255_u8;
     let mut flag_rgb_data = (255_u8,255_u8,255_u8);
     let timg0 = TimerGroup::new(peripherals.TIMG0);
+    let mut flag_mdoe = MODE::WAVE;
     // let data = [RGB8::new(8, 0, 0); 17];
     let sw_interrupt =
         esp_hal::interrupt::software::SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
@@ -732,7 +805,7 @@ async fn main(spawner: Spawner) -> ! {
                             color_body(&mut display,&mut in_menu_t, &mut in_color_t,&mut flag_rgb_data);
                         },
                         APPMODE::MODE=>{
-                            mode_body(&mut display,&mut in_menu_t);
+                            mode_body(&mut display,&mut in_menu_t, &mut flag_mdoe);
                         }
                     }
                     
@@ -757,26 +830,8 @@ async fn main(spawner: Spawner) -> ! {
                 }
             }
         });
-        // log::info!("hello");
-        // let red = [RGB8::new(254, 0, 0); 17];
-        // led.write(red.into_iter()).unwrap();
-        // Timer::after(Duration::from_millis(1000)).await;
-
-        // let green = [RGB8::new(0, 254, 0); 17];
-        // led.write(green.into_iter()).unwrap();
-        // Timer::after(Duration::from_millis(1000)).await;
-
-        // let blue = [RGB8::new(0, 0, 254); 17];
-        // led.write(blue.into_iter()).unwrap();
-        // Timer::after(Duration::from_millis(1000)).await;
-
-        // let off = [RGB8::new(254, 254, 254); 17];
-        // led.write(off.into_iter()).unwrap();
-        // Timer::after(Duration::from_millis(1000)).await;
-
-        // let off = [RGB8::new(32,32,32); 17];
-        // led.write(off.into_iter()).unwrap();
-        Timer::after(Duration::from_millis(10)).await;
+     
+        Timer::after(Duration::from_millis(1)).await;
         // Timer::after(Duration::from_secs(1)).await;
         
     }
